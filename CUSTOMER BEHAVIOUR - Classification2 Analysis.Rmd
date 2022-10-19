@@ -1,0 +1,260 @@
+---
+title: "CUSTOMER BEHAVIOUR - Classification2 Analysis"
+author: "Tubagus Fathul Arifin"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+     toc: true
+     toc_depth: 5
+     toc_float: true
+     theme: readable
+     highlight: breezedark
+     df_print: paged
+---
+
+```{r echo=FALSE, out.width="100%"}
+knitr::include_graphics("assets/CUSTOMER_BEHAVIOUR.jpg")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+library(dplyr)
+library(ggplot2)
+library(tidymodels)
+library(caret)
+library(e1071)
+library(partykit)
+library(randomForest)
+library(tidyverse)
+```
+
+# **1. DATA INTRODUCTION**  
+  
+As a marketing analyst, we want to increase sales by targeting customers with certain characteristics. From the historical data of **400 customers** who have been prospected, we get information about gender, age, and salary category as well as whether he bought our product or not.  
+  
+## **1.1. Data Preparation**  
+Read the data.
+```{r}
+CB <- read.csv("Customer_Behaviour.csv")
+CB
+glimpse(CB)
+```
+- **Gender**: Gender (Male, Female)  
+- **Age**: Age range (< 30, 30-50, > 50)  
+- **Salary**: Customer Salary Category (Low, Medium, High)  
+- **Purchased**: Whether the client buys our product or not (Yes, No)  
+  
+Check Missing Value.
+```{r}
+anyNA(CB)
+colSums(is.na(CB))
+```
+  
+## **1.2. Data Preprocessing**  
+We need to change the data type of each variable to a data type that matches the data.
+```{r}
+CB <- CB %>% 
+  mutate(Gender = as.factor(Gender),
+         Age = as.factor(Age),
+         Salary = as.factor(Salary),
+         Purchased = as.factor(Purchased))
+CB
+glimpse(CB)
+```
+
+  
+# **2. DATA ANALYSIS**  
+  
+## **2.1. Exploratory**
+From the busines question, We are going to build a predictive model to classify *"whether the client buys our product or not"* (`Purchased` = Yes / No).
+```{r}
+levels(CB$Purchased)
+```
+From the level above, it can be seen that the target variable consists of two categories, namely "No" and "Yes".  
+  
+Check the distribution proportion of **target class**
+```{r}
+prop.table(table(CB$Purchased))
+
+table(CB$Purchased)
+```
+When viewed from the proportion of the two classes, it is quite balanced, so we don't really need additional pre-processing to balance the proportion between the two target classes of variables.  
+  
+## **2.2. Cross Validation**  
+Splitting the data into data train(85%) and data test(15%).
+```{r}
+RNGkind(sample.kind = "Rounding")
+set.seed(417)
+
+# index sampling
+index <- sample(x = nrow(CB), size = nrow(CB)*0.85)
+
+# splitting
+CB_train <- CB[index , ]
+
+CB_test <- CB[-index , ]
+```
+Check dimension.
+```{r}
+dim(CB_train)
+dim(CB_test)
+```
+Eliminating target variable from test dataset.
+```{r}
+CB_test_Val <- CB_test %>% select(-Purchased)
+dim(CB_test_Val)
+```
+Check the distribution proportion of **target class** from data train.
+```{r}
+prop.table(table(CB_train$Purchased))
+
+table(CB_train$Purchase)
+```
+The proportion is quite balanced.  
+  
+# **3. NAIVE BAYES MODEL**  
+  
+## **3.1. Build the model**  
+**Skewness Due To Scarcity** is one of the characteristics of Naive Bayes Model. To get over it, we will do a **Laplace Smoothing** when we build the model. 
+```{r}
+naive_model <- naiveBayes(Purchased  ~ .,
+                          data = CB_train,
+                          laplace = 1)
+naive_model
+```
+  
+## **3.2. Predict the model with test data set**
+```{r}
+naive_pred <- predict(naive_model, newdata = CB_test_Val)
+naive_pred
+```
+  
+## **3.3. Confussion Matrix**
+```{r}
+(conf_mat_naive <- table(naive_pred, CB_test$Purchased))
+```
+The results of the confusionmatrix shows that the Naive Bayes classification correctly predicted **15** customers will **buy** and **2 incorrect** predictions. Similarly, the model predicts **34** customers will **not buy** and **9 predictions incorrectly**. What is the level of accuracy?? Let's see below.
+```{r}
+(nb_cm <- confusionMatrix(conf_mat_naive))
+```
+  
+# **4. DECISSION TREE MODEL**  
+  
+## **4.1. Build the model.**
+```{r}
+dt_model <- ctree(Purchased ~ .,
+                  CB_train,
+                  control = ctree_control(mincriterion=0.95,
+                                             minsplit=20,
+                                             minbucket=7))
+plot(dt_model, type="simple")
+dt_model
+```
+the model above is built with default parameters. And to produce a better model we need to do *post-prunning tree* to get a simpler model. Becaude for a **Decission Tree Model** it has a better result if the model is simpler. 
+  
+And to do that We will changing the following parameters:  
+  
+- `mincriterion`: increase the value  
+- `minsplit`: increase the value  
+- `minbucket`: increase the value  
+```{r}
+dt_model_prun <- ctree(Purchased ~ .,
+                  CB_train,
+                  control = ctree_control(mincriterion=0.97,
+                                             minsplit=60,
+                                             minbucket=21))
+plot(dt_model_prun, type="simple")
+dt_model_prun
+```
+From the result above, the model has become simple enough.
+
+## **4.2. Predict the model with test data set**  
+After we train the data train then we can use it directly on the test data.
+```{r}
+dt_pred <- predict(dt_model, CB_test)
+dt_pred
+```
+  
+## **4.3. Confussion Matrix**
+```{r}
+(conf_matrix_dt <- table(dt_pred, CB_test$Purchased))
+```
+The results of the confusionmatrix shows that the Decission Tree classification correctly predicted **15** customers will **buy** and **2 incorrect** predictions. Similarly, the model predicts **34** customers will **not buy** and **9 predictions incorrectly**. What is the level of accuracy?? Let's see below.
+```{r}
+(dt_cm <- confusionMatrix(conf_matrix_dt))
+```
+  
+# **5. RANDOM FOREST MODEL**   
+  
+When using random forest - we are not required to split our dataset into train and test sets because random forest already has **out-of-bag estimates (OOB)** which act as a reliable estimate of the accuracy on unseen examples. Although, it is also possible to hold out a regular train-test cross-validation.  
+
+## **5.1. Build the model**
+We will create a Random Forest model using a train dataset with 5-fold cross validation, then the process is repeated 3 times.
+```{r}
+set.seed(417)
+ 
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 5, # k-fold
+                     repeats = 3) # repetition
+
+(CB_forest <- train(Purchased ~ .,
+                   data = CB_train,
+                   method = "rf", # random forest
+                    trControl = ctrl))
+ 
+saveRDS(CB_forest, "CB_forest.RDS")
+```
+From the model summary, we know that the optimum number of variables considered for splitting at each tree node is 3. We can also inspect the importance of each variable that was used in our random forest using `varImp()`.
+```{r}
+varImp(CB_forest)
+```
+The OOB we achieved (in the summary below) was generated from our CB_train dataset.
+```{r}
+plot(CB_forest$finalModel)
+legend("topright", colnames(CB_forest$finalModel$err.rate),col=1:6,cex=0.8,fill=1:6)
+```
+And we can see the final model as follows.
+```{r}
+CB_forest$finalModel
+```
+The results of the using of mtry = 3, shows that the model correctly predicted **83** customers will **buy** and **36 incorrect** predictions. Similarly, the model predicts **191** customers will **not buy** and **30 predictions incorrectly**.  
+  
+## **5.2. Predict the model with test data set**  
+Let’s test our random forest model to our CB_test dataset.
+```{r}
+forest_pred <- predict(CB_forest, CB_test_Val)
+forest_pred
+```
+  
+## **5.3. Confussion Matrix**  
+```{r}
+(conf_matrix_forest <- table(forest_pred, CB_test$Purchased))
+```
+The results of the confusionmatrix shows that the Random Forest classification correctly predicted **15** customers will **buy** and **3 incorrect** predictions. Similarly, the model predicts **33** customers will **not buy** and **9 predictions incorrectly**. What is the level of accuracy?? Let's see below.
+```{r}
+(rf_cm <- confusionMatrix(conf_matrix_forest))
+```
+  
+# **6. CONCLUSION**  
+  
+Based on business questions, the best metrics are `accuracy` & `sensitivity/recall`. Because we want to predict whether a customer will buy or not the product.
+```{r}
+(eval_nb <- data_frame(Accuracy = nb_cm$overall[1],
+           Recall = nb_cm$byClass[1],
+           Specificity = nb_cm$byClass[2],
+           Precision = nb_cm$byClass[3]))
+
+(eval_dt <- data_frame(Accuracy = dt_cm$overall[1],
+           Recall = dt_cm$byClass[1],
+           Specificity = dt_cm$byClass[2],
+           Precision = dt_cm$byClass[3]))
+
+(eval_rf <- data_frame(Accuracy = rf_cm$overall[1],
+           Recall = rf_cm$byClass[1],
+           Specificity = rf_cm$byClass[2],
+           Precision = rf_cm$byClass[3]))
+```
+Based on the evaluation above, it can be seen that the results of the Naive Bayes & Decission Tree have a similar and better accuracy and sensitivity/recal than Random Forest.  
+  
+So it was decided that we can use Naive Bayes & Decission Tree model to answer future business questions.
